@@ -36,9 +36,12 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 
+use std::time;
+
 use crate::Error;
 use crate::Result;
 
+use crate::flowcontrol;
 use crate::ranges;
 
 const DEFAULT_URGENCY: u8 = 127;
@@ -48,6 +51,12 @@ const SEND_BUFFER_SIZE: usize = 5;
 
 #[cfg(not(test))]
 const SEND_BUFFER_SIZE: usize = 4096;
+
+// The default size of the receiver stream flow control window.
+const DEFAULT_STREAM_WINDOW: u64 = 32 * 1024;
+
+/// The maximum size of the receiver stream flow control window.
+const MAX_STREAM_WINDOW: u64 = 16 * 1024 * 1024;
 
 /// Keeps track of QUIC streams and enforces stream limits.
 #[derive(Default)]
@@ -693,11 +702,8 @@ pub struct RecvBuf {
     /// The total length of data received on this stream.
     len: u64,
 
-    /// The maximum offset the peer is allowed to send us.
-    max_data: u64,
-
-    /// The updated maximum offset the peer is allowed to send us.
-    max_data_next: u64,
+    /// Receiver flow controller.
+    flow_control: flowcontrol::FlowControl,
 
     /// The final stream offset received from the peer, if any.
     fin_off: Option<u64>,
@@ -713,8 +719,10 @@ impl RecvBuf {
     /// Creates a new receive buffer.
     fn new(max_data: u64) -> RecvBuf {
         RecvBuf {
-            max_data,
-            max_data_next: max_data,
+            flow_control: flowcontrol::FlowControl::new(
+                max_data,
+                cmp::min(max_data, DEFAULT_STREAM_WINDOW),
+            ),
             ..RecvBuf::default()
         }
     }
@@ -725,7 +733,7 @@ impl RecvBuf {
     /// as handling incoming data that overlaps data that is already in the
     /// buffer.
     pub fn write(&mut self, buf: RangeBuf) -> Result<()> {
-        if buf.max_off() > self.max_data {
+        if buf.max_off() > self.max_data() {
             return Err(Error::FlowControl);
         }
 
@@ -878,7 +886,8 @@ impl RecvBuf {
             std::collections::binary_heap::PeekMut::pop(buf);
         }
 
-        self.max_data_next = self.max_data_next.saturating_add(len as u64);
+        // Update consumed bytes for flow control.
+        self.flow_control.add_consumed(len as u64);
 
         Ok((len, self.is_fin()))
     }
@@ -921,13 +930,29 @@ impl RecvBuf {
     }
 
     /// Commits the new max_data limit.
-    pub fn update_max_data(&mut self) {
-        self.max_data = self.max_data_next;
+    pub fn update_max_data(&mut self, now: time::Instant) {
+        self.flow_control.update_max_data(now);
     }
 
     /// Return the new max_data limit.
     pub fn max_data_next(&mut self) -> u64 {
-        self.max_data_next
+        self.flow_control.max_data_next()
+    }
+
+    /// Return the current flow control limit.
+    fn max_data(&self) -> u64 {
+        self.flow_control.max_data()
+    }
+
+    /// Return the current window.
+    pub fn window(&self) -> u64 {
+        self.flow_control.window()
+    }
+
+    /// Autotune the window size.
+    pub fn autotune_window(&mut self, now: time::Instant, rtt: time::Duration) {
+        self.flow_control
+            .autotune_window(now, rtt, MAX_STREAM_WINDOW);
     }
 
     /// Shuts down receiving data.
@@ -952,11 +977,7 @@ impl RecvBuf {
 
     /// Returns true if we need to update the local flow control limit.
     pub fn almost_full(&self) -> bool {
-        // Send MAX_STREAM_DATA when the new limit is at least double the
-        // amount of data that can be received before blocking.
-        self.fin_off.is_none() &&
-            self.max_data_next != self.max_data &&
-            self.max_data_next / 2 > self.max_data - self.len
+        self.fin_off.is_none() && self.flow_control.should_update_max_data()
     }
 
     /// Returns the largest offset ever received.
@@ -2387,7 +2408,7 @@ mod tests {
 
         assert!(stream.recv.almost_full());
 
-        stream.recv.update_max_data();
+        stream.recv.update_max_data(time::Instant::now());
         assert_eq!(stream.recv.max_data_next(), 25);
         assert!(!stream.recv.almost_full());
 
