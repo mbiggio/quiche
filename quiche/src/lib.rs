@@ -4532,6 +4532,12 @@ impl Connection {
         self.handshake.peer_cert()
     }
 
+    /// Returns the peer's certificate chain (if any) as a vector of DER-encoded buffers.
+    #[inline]
+    pub fn peer_certs(&self) -> Option<Vec<&[u8]>> {
+        self.handshake.peer_certs()
+    }
+
     /// Returns the serialized cryptographic session for the connection.
     ///
     /// This can be used by a client to cache a connection's session, and resume
