@@ -609,7 +609,7 @@ impl Handshake {
         Some(sigalg.to_string())
     }
 
-    pub fn peer_cert(&self) -> Option<&[u8]> {
+    pub fn peer_cert(&self, index: i32) -> Option<&[u8]> {
         let peer_cert = unsafe {
             let chain =
                 map_result_ptr(SSL_get0_peer_certificates(self.as_ptr())).ok()?;
@@ -618,7 +618,7 @@ impl Handshake {
             }
 
             let buffer =
-                map_result_ptr(sk_value(chain, 0) as *const CRYPTO_BUFFER)
+                map_result_ptr(sk_value(chain, index) as *const CRYPTO_BUFFER)
                     .ok()?;
 
             let out_len = CRYPTO_BUFFER_len(buffer);
@@ -631,44 +631,6 @@ impl Handshake {
         };
 
         Some(peer_cert)
-    }
-
-    pub fn peer_certs(&self) -> Option<Vec<&[u8]>> {
-        let result = unsafe {
-            let chain =
-                map_result_ptr(SSL_get0_peer_certificates(self.as_ptr())).ok()?;
-            if sk_num(chain) <= 0 {
-                return None;
-            }
-
-            let mut i = 0;
-            let mut result = vec![];
-            loop {
-                let buffer = if let Ok(buffer) =
-                    map_result_ptr(sk_value(chain, i) as *const CRYPTO_BUFFER)
-                {
-                    buffer
-                } else {
-                    break;
-                };
-
-                let out_len = CRYPTO_BUFFER_len(buffer);
-                if out_len == 0 {
-                    return None;
-                }
-
-                let out = CRYPTO_BUFFER_data(buffer);
-                let peer_cert = slice::from_raw_parts(out, out_len as usize);
-
-                result.push(peer_cert);
-
-                i = i +1;
-            }
-
-            result
-        };
-
-        Some(result)
     }
 
     pub fn is_completed(&self) -> bool {

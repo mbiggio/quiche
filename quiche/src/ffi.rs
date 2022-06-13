@@ -907,7 +907,7 @@ pub extern fn quiche_conn_application_proto(
 pub extern fn quiche_conn_peer_cert(
     conn: &mut Connection, out: &mut *const u8, out_len: &mut size_t,
 ) {
-    match conn.peer_cert() {
+    match conn.peer_cert(0) {
         Some(peer_cert) => {
             *out = peer_cert.as_ptr();
             *out_len = peer_cert.len();

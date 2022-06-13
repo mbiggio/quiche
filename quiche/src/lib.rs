@@ -4526,16 +4526,10 @@ impl Connection {
         self.handshake.server_name()
     }
 
-    /// Returns the peer's leaf certificate (if any) as a DER-encoded buffer.
+    /// Returns the peer's ith certificate (if any) as a DER-encoded buffer.
     #[inline]
-    pub fn peer_cert(&self) -> Option<&[u8]> {
-        self.handshake.peer_cert()
-    }
-
-    /// Returns the peer's certificate chain (if any) as a vector of DER-encoded buffers.
-    #[inline]
-    pub fn peer_certs(&self) -> Option<Vec<&[u8]>> {
-        self.handshake.peer_certs()
+    pub fn peer_cert(&self, index: i32) -> Option<&[u8]> {
+        self.handshake.peer_cert(index)
     }
 
     /// Returns the serialized cryptographic session for the connection.
@@ -9288,7 +9282,7 @@ mod tests {
         let mut pipe = testing::Pipe::default().unwrap();
         assert_eq!(pipe.handshake(), Ok(()));
 
-        match pipe.client.peer_cert() {
+        match pipe.client.peer_cert(0) {
             Some(c) => assert_eq!(c.len(), 753),
 
             None => panic!("missing server certificate"),
